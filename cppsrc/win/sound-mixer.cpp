@@ -1,4 +1,3 @@
-#include <iostream>
 #include "sound-mixer.hpp"
 #include "win-sound-mixer.hpp"
 

@@ -1,5 +1,4 @@
 // clang-format off
-#include <iostream>
 #include <mmdeviceapi.h>
 #include <Functiondiscoverykeys_devpkey.h>
 // clang-format on
@@ -714,8 +713,6 @@ IFACEMETHODIMP SoundMixerAudioSessionEvent::OnStateChanged(
 IFACEMETHODIMP SoundMixerAudioSessionEvent::OnSessionDisconnected(
     AudioSessionDisconnectReason DisconnectReason)
 {
-    std::cout << "AudioSession: " << session->name() << " deez connected"
-              << std::endl;
     return S_OK;
 }
 IFACEMETHODIMP SoundMixerAudioSessionEvent::QueryInterface(

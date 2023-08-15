@@ -26,7 +26,6 @@ typedef void (*on_session_changed_cb_t)(
     AudioSessionDescriptor sess, NotificationHandler);
 class AudioSession {
   public:
-    AudioSession(IAudioSessionControl2 *control);
     AudioSession(IAudioSessionControl2 *control, on_session_changed_cb_t cb);
     ~AudioSession();
 
