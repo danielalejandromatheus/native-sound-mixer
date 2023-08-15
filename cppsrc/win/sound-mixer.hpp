@@ -24,11 +24,15 @@ class AudioSessionObject : public Napi::ObjectWrap<AudioSessionObject> {
     void SetVolume(const Napi::CallbackInfo &info, const Napi::Value &value);
     void SetMute(const Napi::CallbackInfo &info, const Napi::Value &value);
 
+    Napi::Value RegisterEvent(const Napi::CallbackInfo &info);
+    Napi::Value RemoveEvent(const Napi::CallbackInfo &info);
+
     void SetChannelVolume(const Napi::CallbackInfo &info, const Napi::Value &);
     Napi::Value GetChannelVolume(const Napi::CallbackInfo &info);
 
   private:
     static Napi::Function GetClass(Napi::Env);
+    SoundMixerUtils::AudioSessionDescriptor Desc();
 
   public:
     void *pSession;
@@ -81,6 +85,8 @@ class MixerObject : public Napi::ObjectWrap<MixerObject> {
     virtual ~MixerObject();
     static Napi::Value GetDefaultDevice(const Napi::CallbackInfo &info);
     static void on_device_change_cb(SoundMixerUtils::DeviceDescriptor d,
+        SoundMixerUtils::NotificationHandler data);
+    static void on_session_change_cb(SoundMixerUtils::AudioSessionDescriptor a,
         SoundMixerUtils::NotificationHandler data);
 
   public:

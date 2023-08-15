@@ -12,7 +12,13 @@ bool deviceEquals(DeviceDescriptor a, DeviceDescriptor b)
         return false;
     return a.type == b.type;
 }
-
+bool audioSessionEquals(AudioSessionDescriptor a, AudioSessionDescriptor b)
+{
+    if (a.fullName != b.fullName)
+        return false;
+    else
+        return a.id != b.id;
+}
 static uint32_t jenkins_hash(const char *key, char eventType)
 {
     size_t i = 0;
@@ -36,11 +42,10 @@ static uint32_t jenkins_hash(const char *key, char eventType)
     return hash;
 }
 
-uint32_t EventPool::getHashCode(DeviceDescriptor device, EventType type)
+uint32_t EventPool::getHashCode(std::string id, EventType type)
 {
-    return jenkins_hash(device.id.c_str(), (char)type);
+    return jenkins_hash(id.c_str(), (char)type);
 }
-
 EventPool::EventPool() : counter(0)
 {
 }
@@ -53,7 +58,7 @@ EventPool::~EventPool()
 int EventPool::RegisterEvent(
     DeviceDescriptor device, EventType type, TSFN func)
 {
-    uint32_t key = getHashCode(device, type);
+    uint32_t key = getHashCode(device.id, type);
     if (m_events.count(key) <= 0)
     {
         std::map<int, TSFN> res;
@@ -66,10 +71,25 @@ int EventPool::RegisterEvent(
     }
     return counter++;
 }
-
+int EventPool::RegisterEvent(
+    AudioSessionDescriptor audioSession, EventType type, TSFN func)
+{
+    uint32_t key = getHashCode(audioSession.id, type);
+    if (m_events.count(key) <= 0)
+    {
+        std::map<int, TSFN> res;
+        res[counter] = func;
+        m_events[key] = res;
+    }
+    else
+    {
+        m_events[key][counter] = func;
+    }
+    return counter++;
+}
 bool EventPool::RemoveEvent(DeviceDescriptor device, EventType type, int id)
 {
-    uint32_t key = getHashCode(device, type);
+    uint32_t key = getHashCode(device.id, type);
     if (m_events.count(key) <= 0)
         return false;
 
@@ -83,11 +103,43 @@ bool EventPool::RemoveEvent(DeviceDescriptor device, EventType type, int id)
         return false;
     }
 }
+bool EventPool::RemoveEvent(
+    AudioSessionDescriptor session, EventType type, int id)
+{
+    uint32_t key = getHashCode(session.id, type);
+    if (m_events.count(key) <= 0)
+        return false;
 
+    if (m_events[key].count(id) > 0)
+    {
+        m_events[key][id].Release();
+        return m_events[key].erase(id) > 0;
+    }
+    else
+    {
+        return false;
+    }
+}
 std::vector<TSFN> EventPool::GetListeners(
     DeviceDescriptor device, EventType type)
 {
-    uint32_t key = getHashCode(device, type);
+    uint32_t key = getHashCode(device.id, type);
+    std::vector<TSFN> res;
+    if (m_events.count(key) <= 0)
+        return res;
+    std::map<int, TSFN> contained = m_events[key];
+    int i = 0;
+    for (auto it = contained.begin(); it != contained.end(); ++it)
+    {
+        res.push_back(it->second);
+    }
+
+    return res;
+}
+std::vector<TSFN> EventPool::GetListeners(
+    AudioSessionDescriptor session, EventType type)
+{
+    uint32_t key = getHashCode(session.id, type);
     std::vector<TSFN> res;
     if (m_events.count(key) <= 0)
         return res;
@@ -103,7 +155,7 @@ std::vector<TSFN> EventPool::GetListeners(
 
 void EventPool::RemoveAllListeners(DeviceDescriptor device, EventType type)
 {
-    uint32_t key = getHashCode(device, type);
+    uint32_t key = getHashCode(device.id, type);
     std::map<int, TSFN> contained = m_events[key];
     for (auto it = contained.begin(); it != contained.end(); ++it)
     {
@@ -112,6 +164,17 @@ void EventPool::RemoveAllListeners(DeviceDescriptor device, EventType type)
     m_events.erase(key);
 }
 
+void EventPool::RemoveAllListeners(
+    AudioSessionDescriptor session, EventType type)
+{
+    uint32_t key = getHashCode(session.id, type);
+    std::map<int, TSFN> contained = m_events[key];
+    for (auto it = contained.begin(); it != contained.end(); ++it)
+    {
+        it->second.Release();
+    }
+    m_events.erase(key);
+}
 void EventPool::Clear()
 {
     for (auto it1 = m_events.begin(); it1 != m_events.end(); ++it1)
@@ -140,11 +203,11 @@ void CallJs(Napi::Env env, Napi::Function cb,
     {
         bool valid = true;
         Napi::Value value;
-        if (data->flags & DEVICE_CHANGE_MASK_MUTE)
+        if (data->flags & EVENT_CHANGE_MASK_MUTE)
         {
             value = Napi::Boolean::New(env, data->mute);
         }
-        else if (data->flags & DEVICE_CHANGE_MASK_VOLUME)
+        else if (data->flags & EVENT_CHANGE_MASK_VOLUME)
         {
             value = Napi::Number::New(env, data->volume);
         }

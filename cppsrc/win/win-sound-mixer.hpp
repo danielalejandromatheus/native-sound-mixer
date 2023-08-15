@@ -11,6 +11,7 @@
 #define LEFT 0
 #define RIGHT 1
 
+using SoundMixerUtils::AudioSessionDescriptor;
 using SoundMixerUtils::DeviceDescriptor;
 using SoundMixerUtils::DeviceType;
 using SoundMixerUtils::NotificationHandler;
@@ -21,10 +22,12 @@ namespace WinSoundMixer
 
 typedef void (*on_device_changed_cb_t)(
     DeviceDescriptor dev, NotificationHandler);
-
+typedef void (*on_session_changed_cb_t)(
+    AudioSessionDescriptor sess, NotificationHandler);
 class AudioSession {
   public:
     AudioSession(IAudioSessionControl2 *control);
+    AudioSession(IAudioSessionControl2 *control, on_session_changed_cb_t cb);
     ~AudioSession();
 
     virtual bool GetMute();
@@ -36,19 +39,28 @@ class AudioSession {
     virtual VolumeBalance GetVolumeBalance();
 
     std::string id();
+    int pid();
     std::string name();
     std::string path();
     AudioSessionState state();
 
+    float _oldVolume = 0.F;
+    BOOL _oldMute = 0.F;
+    AudioSessionDescriptor Desc()
+    {
+        return desc;
+    }
+    on_session_changed_cb_t _sessionCallback;
   protected:
     IAudioSessionControl2 *control;
-
     ISimpleAudioVolume *getAudioVolume();
+    IAudioSessionEvents *audio_cb;
+    AudioSessionDescriptor desc;
 };
 
 class Device {
   public:
-    Device(IMMDevice *, on_device_changed_cb_t cb);
+    Device(IMMDevice *, on_device_changed_cb_t cb, on_session_changed_cb_t s_cb);
     ~Device();
 
     virtual bool GetMute();
@@ -79,6 +91,7 @@ class Device {
 
     static IMMDeviceEnumerator *GetEnumerator();
     on_device_changed_cb_t _deviceCallback;
+    on_session_changed_cb_t _sessionCallback;
 
     float _oldVolume = 0.F;
     BOOL _oldMute = 0.F;
@@ -96,7 +109,7 @@ class Device {
 
 class SoundMixer {
   public:
-    SoundMixer(on_device_changed_cb_t);
+    SoundMixer(on_device_changed_cb_t, on_session_changed_cb_t);
     ~SoundMixer();
     std::vector<Device *> GetDevices();
     Device *GetDefaultDevice(DeviceType);
@@ -120,8 +133,8 @@ class SoundMixer {
 
     void filterDevices();
     on_device_changed_cb_t deviceCallback;
+    on_session_changed_cb_t sessionCallback;
 };
-
 class SoundMixerAudioEndpointVolumeCallback
     : public IAudioEndpointVolumeCallback {
   public:
@@ -136,5 +149,33 @@ class SoundMixerAudioEndpointVolumeCallback
 
   private:
     Device *device;
+};
+
+class SoundMixerAudioSessionEvent : public IAudioSessionEvents {
+  public:
+    SoundMixerAudioSessionEvent(AudioSession *session);
+
+    IFACEMETHODIMP_(ULONG) AddRef();
+    IFACEMETHODIMP_(ULONG) Release();
+
+  private:
+    IFACEMETHODIMP OnDisplayNameChanged(
+        LPCWSTR NewDisplayName, LPCGUID EventContext);
+    IFACEMETHODIMP OnIconPathChanged(
+        LPCWSTR NewIconPath, LPCGUID EventContext);
+    IFACEMETHODIMP OnSimpleVolumeChanged(
+        float NewVolume, BOOL NewMute, LPCGUID EventContext);
+    IFACEMETHODIMP OnChannelVolumeChanged(DWORD ChannelCount,
+        float NewChannelVolumeArray[], DWORD ChangedChannel,
+        LPCGUID EventContext);
+    IFACEMETHODIMP OnGroupingParamChanged(
+        LPCGUID NewGroupingParam, LPCGUID EventContext);
+    IFACEMETHODIMP OnStateChanged(AudioSessionState NewState);
+    IFACEMETHODIMP OnSessionDisconnected(
+        AudioSessionDisconnectReason DisconnectReason);
+    IFACEMETHODIMP QueryInterface(const IID &iid, void **ppUnk);
+
+  protected:
+    AudioSession *session;
 };
 }; // namespace WinSoundMixer

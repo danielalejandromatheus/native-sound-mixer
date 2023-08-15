@@ -1,4 +1,5 @@
 // clang-format off
+#include <iostream>
 #include <mmdeviceapi.h>
 #include <Functiondiscoverykeys_devpkey.h>
 // clang-format on
@@ -101,7 +102,9 @@ template <class T> void SafeRelease(T **ppT)
     }
 }
 
-SoundMixer::SoundMixer(on_device_changed_cb_t cb) : deviceCallback(cb)
+SoundMixer::SoundMixer(
+    on_device_changed_cb_t d_cb, on_session_changed_cb_t s_cb)
+    : deviceCallback(d_cb), sessionCallback(s_cb)
 {
     CoInitialize(NULL);
     HRESULT ok = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL,
@@ -157,7 +160,7 @@ vector<Device *> SoundMixer::GetDevices()
         std::string key = toString(winId);
         if (devices.count(key) <= 0)
         {
-            devices[key] = new Device(dev, deviceCallback);
+            devices[key] = new Device(dev, deviceCallback, sessionCallback);
         }
         else
         {
@@ -210,7 +213,7 @@ Device *SoundMixer::GetDefaultDevice(DeviceType type)
     Device *dev = getDeviceById(id);
     if (dev == NULL)
     {
-        dev = new Device(windev, deviceCallback);
+        dev = new Device(windev, deviceCallback, sessionCallback);
         devices[toString(id)] = dev;
     }
     else
@@ -221,9 +224,10 @@ Device *SoundMixer::GetDefaultDevice(DeviceType type)
     return dev;
 }
 
-Device::Device(IMMDevice *dev, on_device_changed_cb_t cb)
+Device::Device(
+    IMMDevice *dev, on_device_changed_cb_t cb, on_session_changed_cb_t s_cb)
     : device(dev), endpoint(NULL), endpointVolume(NULL), _deviceCallback(cb),
-      device_cb(NULL)
+      _sessionCallback(s_cb), device_cb(NULL)
 {
     LPWSTR winId;
     device->GetId(&winId);
@@ -347,7 +351,7 @@ vector<AudioSession *> Device::GetAudioSessions()
         if (pEnumerator->GetSession(i, &control) == S_OK
             && control->QueryInterface(&control2) == S_OK)
         {
-            sessions.push_back(new AudioSession(control2));
+            sessions.push_back(new AudioSession(control2, _sessionCallback));
         }
         SafeRelease(&control);
     }
@@ -424,13 +428,31 @@ VolumeBalance Device::GetVolumeBalance()
 
     return result;
 }
-
-AudioSession::AudioSession(IAudioSessionControl2 *control) : control(control)
+AudioSession::AudioSession(IAudioSessionControl2 *control)
+    : control(control), audio_cb(NULL), _sessionCallback(NULL)
 {
+    audio_cb = new SoundMixerAudioSessionEvent(this);
+    control->RegisterAudioSessionNotification(audio_cb);
+
+    desc = AudioSessionDescriptor {};
+    desc.id = id();
+    desc.fullName = path();
+}
+AudioSession::AudioSession(
+    IAudioSessionControl2 *control, on_session_changed_cb_t cb)
+    : control(control), audio_cb(NULL), _sessionCallback(cb)
+{
+    audio_cb = new SoundMixerAudioSessionEvent(this);
+    control->RegisterAudioSessionNotification(audio_cb);
+
+    desc = AudioSessionDescriptor {};
+    desc.id = id();
+    desc.fullName = path();
 }
 
 AudioSession::~AudioSession()
 {
+    SafeRelease(&audio_cb);
     SafeRelease(&control);
 }
 
@@ -482,7 +504,15 @@ std::string AudioSession::path()
     }
     return "";
 }
-
+int AudioSession::pid()
+{
+    DWORD pId;
+    if (control->GetProcessId(&pId) == S_OK)
+    {
+        return pId;
+    }
+    return 0;
+}
 ISimpleAudioVolume *AudioSession::getAudioVolume()
 {
     ISimpleAudioVolume *volume;
@@ -586,12 +616,12 @@ IFACEMETHODIMP SoundMixerAudioEndpointVolumeCallback::OnNotify(
     int flags = 0;
     if (pNotify->bMuted != device->_oldMute)
     {
-        flags |= DEVICE_CHANGE_MASK_MUTE;
+        flags |= EVENT_CHANGE_MASK_MUTE;
         device->_oldMute = pNotify->bMuted;
     }
     if (pNotify->fMasterVolume != device->_oldVolume)
     {
-        flags |= DEVICE_CHANGE_MASK_VOLUME;
+        flags |= EVENT_CHANGE_MASK_VOLUME;
         device->_oldVolume = pNotify->fMasterVolume;
     }
     NotificationHandler handler = NotificationHandler {
@@ -620,4 +650,77 @@ IFACEMETHODIMP_(ULONG) SoundMixerAudioEndpointVolumeCallback::Release()
     return 0;
 }
 
+SoundMixerAudioSessionEvent::SoundMixerAudioSessionEvent(AudioSession *session)
+    : session(session)
+{
+}
+
+IFACEMETHODIMP_(ULONG) SoundMixerAudioSessionEvent::AddRef()
+{
+    return 0;
+}
+IFACEMETHODIMP_(ULONG) SoundMixerAudioSessionEvent::Release()
+{
+    return 0;
+}
+IFACEMETHODIMP SoundMixerAudioSessionEvent::OnDisplayNameChanged(
+    LPCWSTR NewDisplayName, LPCGUID EventContext)
+{
+    return S_OK;
+}
+IFACEMETHODIMP SoundMixerAudioSessionEvent::OnIconPathChanged(
+    LPCWSTR NewIconPath, LPCGUID EventContext)
+{
+    return S_OK;
+}
+IFACEMETHODIMP SoundMixerAudioSessionEvent::OnSimpleVolumeChanged(
+    float NewVolume, BOOL NewMute, LPCGUID EventContext)
+{
+    if (session->_sessionCallback == NULL)
+        return S_OK;
+
+    int flags = 0;
+    if (NewMute != session->_oldMute)
+    {
+        flags |= EVENT_CHANGE_MASK_MUTE;
+        session->_oldMute = NewMute;
+    }
+    if (NewVolume != session->_oldVolume)
+    {
+        flags |= EVENT_CHANGE_MASK_VOLUME;
+        session->_oldVolume = NewVolume;
+    }
+    NotificationHandler handler
+        = NotificationHandler {flags, NewVolume, (bool)NewMute};
+    session->_sessionCallback(session->Desc(), handler);
+    return S_OK;
+}
+IFACEMETHODIMP SoundMixerAudioSessionEvent::OnChannelVolumeChanged(
+    DWORD ChannelCount, float NewChannelVolumeArray[], DWORD ChangedChannel,
+    LPCGUID EventContext)
+{
+    return S_OK;
+}
+IFACEMETHODIMP SoundMixerAudioSessionEvent::OnGroupingParamChanged(
+    LPCGUID NewGroupingParam, LPCGUID EventContext)
+{
+    return S_OK;
+}
+IFACEMETHODIMP SoundMixerAudioSessionEvent::OnStateChanged(
+    AudioSessionState NewState)
+{
+    return S_OK;
+}
+IFACEMETHODIMP SoundMixerAudioSessionEvent::OnSessionDisconnected(
+    AudioSessionDisconnectReason DisconnectReason)
+{
+    std::cout << "AudioSession: " << session->name() << " deez connected"
+              << std::endl;
+    return S_OK;
+}
+IFACEMETHODIMP SoundMixerAudioSessionEvent::QueryInterface(
+    const IID &iid, void **ppUnk)
+{
+    return S_OK;
+}
 } // namespace WinSoundMixer
